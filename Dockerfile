@@ -14,7 +14,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY src/app.py .
 
 # Copy secret environment  
-COPY prod.cnf.age . 
+COPY prod.cfg.age . 
 
 # Document the port the app listens on
 EXPOSE 5000
