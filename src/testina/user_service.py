@@ -1,4 +1,5 @@
 from .database import get_db
+from textwrap import dedent
 class UserService:
 
     def __init__(self, app):
@@ -6,13 +7,11 @@ class UserService:
 
     def create_user(self, name, email):
         db = get_db(self.app)
-        cursor = db.execute(
-            """
+        query = dedent("""
             INSERT INTO users (name, email)
             VALUES (?, ?)
-            """,
-            (name, email)
-        )
+            """).strip()
+        cursor = db.execute(query, (name, email))
         db.commit()
         user_id = cursor.lastrowid
         db.close()

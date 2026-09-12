@@ -1,7 +1,7 @@
 from unittest.mock import Mock, patch
 from testina.user_service import UserService
 
-@patch("user_service.get_db")
+@patch("testina.user_service.get_db")
 def test_create_user(mock_get_db):
     # Fake database
     db = Mock()
@@ -24,17 +24,14 @@ def test_create_user(mock_get_db):
         "email": "alice@example.com"
     }
 
-@patch("user_service.get_db")
-def test_create_user(mock_get_db):
+@patch("testina.user_service.get_db")
+def test_create_user2(mock_get_db):
     db = Mock()
     mock_get_db.return_value = db
     service = UserService("fake_app")
     service.create_user("Alice", "alice@example.com")
     db.execute.assert_called_once()
-    db.execute.assert_called_once_with(
-        """
-            INSERT INTO users (name, email)
-            VALUES (?, ?)
-        """,
-        ("Alice", "alice@example.com")
-    )
+    args, kwargs = db.execute.call_args
+    query, params = args
+    assert " ".join(query.split()) == "INSERT INTO users (name, email) VALUES (?, ?)"
+    assert params == ("Alice", "alice@example.com")

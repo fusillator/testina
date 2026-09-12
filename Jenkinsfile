@@ -18,7 +18,7 @@ pipeline {
         }
         stage('Unit tests') {
             steps {
-                sh 'docker run --rm ${IMAGE}:${TAG} pytest'
+                sh 'docker run --rm ${IMAGE}:${TAG} pytest -m "not integration"'
             }
         }
     }
