@@ -1,7 +1,6 @@
 import pytest
 import sqlite3
 from testina import create_app
-from testina.database import init_db
 
 @pytest.fixture
 def app(tmp_path):
