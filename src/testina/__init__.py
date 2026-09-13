@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify
 from .user_service import UserService
-from .database import get_db, init_db
+from .database import init_db
 
 def create_app(database_path="users.db"):
     app = Flask(__name__)

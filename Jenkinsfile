@@ -16,8 +16,13 @@ pipeline {
                 '''
             }
         }
-        stage('Unit tests') {
-            steps {
+        stage('linter'){
+            steps{
+                sh 'docker run --rm ${IMAGE}:${TAG} ruff check src tests'
+            }
+        }
+        stage('unit tests') {
+            steps{
                 sh 'docker run --rm ${IMAGE}:${TAG} pytest -m "not integration"'
             }
         }
