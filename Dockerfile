@@ -5,18 +5,31 @@
 #        pip install .; \
 #    fi
 
-FROM python:3.11-slim AS base
+FROM python:3.14-slim AS base
 WORKDIR /app
-COPY src/testina ./src/testina
 COPY pyproject.toml ./
 
-FROM base as dev
-COPY tests ./tests
-RUN pip install --no-cache-dir ".[dev]"
+FROM base AS local
+COPY requirements-lock-dev.txt ./
+RUN pip install --no-cache-dir --require-hashes -r requirements-lock-dev.txt \
+ && mkdir -p src/testina \
+ && touch src/testina/__init__.py \
+ && pip install --no-deps -e . 
 CMD [ "pytest" ]
 
-FROM base as prod
-RUN pip install --no-cache-dir .
+FROM base AS dev
+COPY requirements-lock-dev.txt ./
+COPY src/testina ./src/testina
+COPY tests ./tests
+RUN pip install --no-cache-dir --require-hashes -r requirements-lock-dev.txt \
+ && pip install --no-deps .
+CMD [ "pytest" ]
+
+FROM base AS prod
+COPY requirements-lock.txt ./
+COPY src/testina ./src/testina
+RUN pip install --no-cache-dir --require-hashes -r requirements-lock.txt \
+ && pip install --no-deps .
 ARG PORT=5000
 EXPOSE $PORT
 ENV FLASK_RUN_PORT=$PORT
