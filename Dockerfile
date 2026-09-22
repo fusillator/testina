@@ -4,6 +4,7 @@
 #    else \
 #        pip install .; \
 #    fi
+ARG BASE_IMAGE=prod
 
 FROM python:3.14-slim AS base
 WORKDIR /app
@@ -17,14 +18,6 @@ RUN pip install --no-cache-dir --require-hashes -r requirements-lock-dev.txt \
  && pip install --no-deps -e . 
 CMD [ "pytest" ]
 
-FROM base AS dev
-COPY requirements-lock-dev.txt ./
-COPY src/testina ./src/testina
-COPY tests ./tests
-RUN pip install --no-cache-dir --require-hashes -r requirements-lock-dev.txt \
- && pip install --no-deps .
-CMD [ "pytest" ]
-
 FROM base AS prod
 COPY requirements-lock.txt ./
 COPY src/testina ./src/testina
@@ -35,3 +28,9 @@ EXPOSE $PORT
 ENV FLASK_RUN_PORT=$PORT
 ENV FLASK_RUN_HOST=0.0.0.0
 CMD ["flask", "--app", "testina:create_app", "run"]
+
+FROM ${BASE_IMAGE} AS dev
+COPY requirements-lock-dev.txt ./
+COPY tests ./tests
+RUN pip install --no-cache-dir --require-hashes -r requirements-lock-dev.txt
+CMD [ "pytest" ]

@@ -82,7 +82,8 @@ pipeline {
       steps {
         sh '''
           docker logout
-          docker build --target dev -t ${IMAGE}:${TAG} .
+          docker build --target prod -t ${IMAGE}:${TAG} .
+          docker build --target dev --build-arg BASE_IMAGE=${IMAGE}:${TAG} -t ${IMAGE}:${TAG}-dev .
         '''
       }
     }
@@ -102,7 +103,7 @@ pipeline {
           --tmpfs /tmp:rw,noexec,nosuid,size=64m,mode=1777 \
           --tmpfs /home/ci/.cache:rw,noexec,nosuid,size=128m,uid=1000,gid=1000,mode=0700 \
           -w /app -e HOME=/home/ci \
-          ${IMAGE}:${TAG} \
+          ${IMAGE}:${TAG}-dev \
           pytest -m "not integration" -o cache_dir=/home/ci/.cache/pytest_cache
         '''
       }
