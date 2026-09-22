@@ -8,9 +8,17 @@ pipeline {
     TAG="${env.GIT_COMMIT}-${env.BUILD_NUMBER}"
   }
     
-  stages{
+  stages {
     stage('sca'){
-      steps{
+      when {
+        anyOf {
+          branch pattern: 'feature/*', comparator: 'GLOB'
+          //branch pattern: 'feature/.+', comparator: 'REGEXP'
+          changeRequest target: 'main', branch: 'feature/*', comparator: 'GLOB'
+          //changeRequest target: 'main', branch: 'feature/.+', comparator: 'REGEXP'
+        }
+      }
+      steps {
         sh '''
           if [ $NODE_NAME = master -o $NODE_NAME = built-in ]; then 
             VOLUME_PATH=$(docker volume inspect jenkins_jenkins_home --format '{{ .Mountpoint }}')
@@ -32,7 +40,15 @@ pipeline {
       }
     }
     stage('linter'){
-      steps{
+      when {
+        anyOf {
+          branch pattern: 'feature/*', comparator: 'GLOB'
+          //branch pattern: 'feature/.+', comparator: 'REGEXP'
+          changeRequest target: 'main', branch: 'feature/*', comparator: 'GLOB'
+          //changeRequest target: 'main', branch: 'feature/.+', comparator: 'REGEXP'
+        }
+      }
+      steps {
         sh '''
           if [ $NODE_NAME = master -o $NODE_NAME = built-in ]; then 
             VOLUME_PATH=$(docker volume inspect jenkins_jenkins_home --format '{{ .Mountpoint }}')
@@ -55,15 +71,31 @@ pipeline {
       }
     }
     stage('build an ephemeral preview for ci test'){
-      steps{
+      when {
+        anyOf {
+          branch pattern: 'feature/*', comparator: 'GLOB'
+          //branch pattern: 'feature/.+', comparator: 'REGEXP'
+          changeRequest target: 'main', branch: 'feature/*', comparator: 'GLOB'
+          //changeRequest target: 'main', branch: 'feature/.+', comparator: 'REGEXP'
+        }
+      }
+      steps {
         sh '''
           docker logout
           docker build --target dev -t ${IMAGE}:${TAG} .
         '''
       }
     }
-    stage('unit tests') {
-      steps{
+    stage('unit tests'){
+      when {
+        anyOf {
+          branch pattern: 'feature/*', comparator: 'GLOB'
+          //branch pattern: 'feature/.+', comparator: 'REGEXP'
+          changeRequest target: 'main', branch: 'feature/*', comparator: 'GLOB'
+          //changeRequest target: 'main', branch: 'feature/.+', comparator: 'REGEXP'
+        }
+      }
+      steps {
         sh '''
           docker run --rm --user 1000:1000 --cap-drop=ALL --security-opt=no-new-privileges:true --read-only \
           --network=none \
@@ -73,6 +105,42 @@ pipeline {
           ${IMAGE}:${TAG} \
           pytest -m "not integration" -o cache_dir=/home/ci/.cache/pytest_cache
         '''
+      }
+    }
+    stage('SAST'){
+      when {
+          changeRequest target: 'main', branch: 'feature/*', comparator: 'GLOB'
+      }
+      environment {
+        SEMGREP_REPO_URL = "${env.GIT_URL}"
+        SEMGREP_REPO_NAME = "${env.JOB_NAME}"
+        SEMGREP_BRANCH = "${env.BRANCH_NAME}"
+        SEMGREP_COMMIT = "${env.GIT_COMMIT}"
+        SEMGREP_PR_ID = "${env.CHANGE_ID}"
+      }
+      steps {
+        withCredentials([string(
+          credentialsId: 'semgrep-fusillator-lab-token',
+          variable: 'SEMGREP_APP_TOKEN'
+        )]){
+        sh '''
+          if [ $NODE_NAME = master -o $NODE_NAME = built-in ]; then 
+            VOLUME_PATH=$(docker volume inspect jenkins_jenkins_home --format '{{ .Mountpoint }}')
+            APP_PATH=${VOLUME_PATH}/${WORKSPACE#$JENKINS_HOME/} 
+          else
+            APP_PATH=${WORKSPACE} 
+          fi
+          docker run --rm --user 1000:1000 --cap-drop=ALL --security-opt=no-new-privileges:true --read-only \
+            --tmpfs /tmp:rw,noexec,nosuid,size=64m,mode=1777 \
+            -v ${APP_PATH}/src:/src:ro \
+            -v "ci_tools_cache:/home/semgrep/.semgrep:rw" \
+            -w /src -e HOME=/home/semgrep \
+            -e SEMGREP_APP_TOKEN -e SEMGREP_REPO_URL -e SEMGREP_REPO_NAME -e SEMGREP_BRANCH -e SEMGREP_COMMIT -e SEMGREP_PR_ID \
+            -e SEMGREP_VERSION_CACHE_PATH=/home/semgrep/.semgrep -e SEMGREP_LOG_FILE=/tmp/semgrep.log \
+            semgrep/semgrep:1.176.1-nonroot@sha256:4f79d592f85f91aa37597c0cfbad94ea5fa35c65571425fb061e406e6724d76e \
+            sh -c "semgrep install-semgrep-pro && semgrep ci --pro --code --no-suppress-errors --dry-run"
+          '''
+        }
       }
     }
   }
