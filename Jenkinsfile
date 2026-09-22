@@ -5,7 +5,7 @@ pipeline {
   environment {
     IMAGE_CI="fusillator/ci-tools:2026.09.15"
     IMAGE="fusillator/flask-demo"
-    TAG="${env.GIT_COMMIT}-${env.BUILD_NUMBER}"
+    TAG="${env.GIT_COMMIT.take(7)}-b${env.BUILD_NUMBER}"
   }
     
   stages {
@@ -82,7 +82,8 @@ pipeline {
       steps {
         sh '''
           docker logout
-          docker build --target dev -t ${IMAGE}:${TAG} .
+          docker build --target prod -t ${IMAGE}:${TAG} .
+          docker build --target dev --build-arg BASE_IMAGE=${IMAGE}:${TAG} -t ${IMAGE}:${TAG}-dev .
         '''
       }
     }
@@ -102,14 +103,14 @@ pipeline {
           --tmpfs /tmp:rw,noexec,nosuid,size=64m,mode=1777 \
           --tmpfs /home/ci/.cache:rw,noexec,nosuid,size=128m,uid=1000,gid=1000,mode=0700 \
           -w /app -e HOME=/home/ci \
-          ${IMAGE}:${TAG} \
+          ${IMAGE}:${TAG}-dev \
           pytest -m "not integration" -o cache_dir=/home/ci/.cache/pytest_cache
         '''
       }
     }
     stage('SAST'){
       when {
-          changeRequest target: 'main', branch: 'feature/*', comparator: 'GLOB'
+        changeRequest target: 'main', branch: 'feature/*', comparator: 'GLOB'
       }
       environment {
         SEMGREP_REPO_URL = "${env.GIT_URL}"
@@ -143,11 +144,48 @@ pipeline {
         }
       }
     }
+    stage('push'){
+      when {
+        changeRequest target: 'main', branch: 'feature/*', comparator: 'GLOB'
+      }
+      steps {
+        withCredentials([usernamePassword(credentialsId: 'dockerhub-token', passwordVariable: 'DOCKERHUB_PWD', usernameVariable: 'DOCKERHUB_USR')]) {
+          sh 'echo $DOCKERHUB_PWD | docker login --password-stdin -u $DOCKERHUB_USR'
+        }
+        sh '''
+          docker tag ${IMAGE}:${TAG} ${IMAGE}:pr-${CHANGE_ID}
+          docker push ${IMAGE}:pr-${CHANGE_ID}
+        '''
+      }
+    }
+    stage('promote'){
+      when { branch 'main' }
+      steps {
+        script {
+          def m = (env.GIT_URL =~ /github\.com[:\/]([^\/]+)\/(.+?)(\.git)?$/)
+          def owner = m[0][1]
+          def repo  = m[0][2]
+          withCredentials([usernamePassword(credentialsId: 'github-testina-ro-token', passwordVariable: 'GITHUB_TOKEN', usernameVariable: '')]) {
+            def resp = sh(script: """
+              curl -s -H "Authorization: Bearer ${GITHUB_TOKEN}" -H "Accept: application/vnd.github+json" https://api.github.com/repos/${owner}/${repo}/commits/${env.GIT_COMMIT}/pulls
+            """, returnStdout: true).trim()
+          }
+          def prNumber = sh(script: "echo '${resp}' | jq -r '.[0].number'", returnStdout: true).trim()
+          sh '''
+            docker pull ${IMAGE}:pr-${prNumber}
+            docker tag ${IMAGE}:pr-${prNumber} ${IMAGE}:main-${TAG}
+            docker tag ${IMAGE}:pr-${prNumber} ${IMAGE}:main-b${BUILD_NUMBER}
+            docker push ${IMAGE}:main-${TAG}
+            docker push ${IMAGE}:main-b{BUILD_NUMBER}
+          '''
+        }
+      }
+    }
   }
 
   post {
     always { 
-      sh 'docker rmi ${IMAGE}:${TAG} || true'
+      sh 'docker rmi ${IMAGE}:${TAG}-dev ${IMAGE}:${TAG} ${IMAGE}:pr-${CHANGE_ID} ${IMAGE}:main-${TAG} ${IMAGE}:main-b${BUILD_NUMBER} || true'
     }
   }
 }
