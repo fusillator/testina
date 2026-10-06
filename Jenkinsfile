@@ -3,7 +3,7 @@ pipeline {
   agent any
     
   environment {
-    IMAGE_CI="fusillator/ci-tools:2026.09.15"
+    IMAGE_CI="fusillator/ci-tools:2026.10.06"
     IMAGE="fusillator/flask-demo"
     TAG="${env.GIT_COMMIT.take(7)}-b${env.BUILD_NUMBER}"
   }
@@ -131,17 +131,43 @@ pipeline {
           else
             APP_PATH=${WORKSPACE} 
           fi
+          docker run --rm --user 0:0 --cap-drop=ALL --cap-add=CHOWN --security-opt=no-new-privileges:true --read-only -v ci_tools_cache:/home/semgrep/.semgrep --entrypoint /usr/bin/chown ${IMAGE_CI} 1000:1000 /home/semgrep/.semgrep
           docker run --rm --user 1000:1000 --cap-drop=ALL --security-opt=no-new-privileges:true --read-only \
             --tmpfs /tmp:rw,noexec,nosuid,size=64m,mode=1777 \
             -v ${APP_PATH}/src:/src:ro \
-            -v "ci_tools_cache:/home/semgrep/.semgrep:rw" \
+            -v ci_tools_cache:/home/semgrep/.semgrep:rw \
+            -v ${APP_PATH}/semgrep.gitconfig:/home/semgrep/.gitconfig:rw \
             -w /src -e HOME=/home/semgrep \
             -e SEMGREP_APP_TOKEN -e SEMGREP_REPO_URL -e SEMGREP_REPO_NAME -e SEMGREP_BRANCH -e SEMGREP_COMMIT -e SEMGREP_PR_ID \
-            -e SEMGREP_VERSION_CACHE_PATH=/home/semgrep/.semgrep -e SEMGREP_LOG_FILE=/tmp/semgrep.log \
+            -e SEMGREP_VERSION_CACHE_PATH=/home/semgrep/.semgrep/version_cache -e SEMGREP_LOG_FILE=/tmp/semgrep.log \
+            -e GIT_CONFIG_GLOBAL=/tmp/gitconfig/.gitconfig \
             semgrep/semgrep:1.176.1-nonroot@sha256:4f79d592f85f91aa37597c0cfbad94ea5fa35c65571425fb061e406e6724d76e \
-            sh -c "semgrep install-semgrep-pro && semgrep ci --pro --code --no-suppress-errors --dry-run"
+            sh -c "mkdir -p /tmp/gitconfig && semgrep scan --pro --config p/default /src"
+            #sh -c "mkdir -p /tmp/gitconfig && semgrep ci --pro --code --no-suppress-errors --dry-run"
+            #sh -c "mkdir -p /tmp/gitconfig && semgrep install-semgrep-pro && semgrep ci --pro --code --no-suppress-errors --dry-run"
           '''
         }
+      }
+    }
+    stage('integration test'){
+      when {
+        anyOf {
+          branch pattern: 'feature/*', comparator: 'GLOB'
+          //branch pattern: 'feature/.+', comparator: 'REGEXP'
+          changeRequest target: 'main', branch: 'feature/*', comparator: 'GLOB'
+          //changeRequest target: 'main', branch: 'feature/.+', comparator: 'REGEXP'
+        }
+      }
+      steps {
+        sh '''
+          docker run --rm --user 1000:1000 --cap-drop=ALL --security-opt=no-new-privileges:true --read-only \
+          --network=none \
+          --tmpfs /tmp:rw,noexec,nosuid,size=64m,mode=1777 \
+          --tmpfs /home/ci/.cache:rw,noexec,nosuid,size=128m,uid=1000,gid=1000,mode=0700 \
+          -w /app -e HOME=/home/ci \
+          ${IMAGE}:${TAG}-dev \
+          pytest -m "integration" -o cache_dir=/home/ci/.cache/pytest_cache
+        '''
       }
     }
     stage('push'){
@@ -163,20 +189,26 @@ pipeline {
       steps {
         script {
           def m = (env.GIT_URL =~ /github\.com[:\/]([^\/]+)\/(.+?)(\.git)?$/)
-          def owner = m[0][1]
-          def repo  = m[0][2]
-          withCredentials([usernamePassword(credentialsId: 'github-testina-ro-token', passwordVariable: 'GITHUB_TOKEN', usernameVariable: '')]) {
-            def resp = sh(script: """
-              curl -s -H "Authorization: Bearer ${GITHUB_TOKEN}" -H "Accept: application/vnd.github+json" https://api.github.com/repos/${owner}/${repo}/commits/${env.GIT_COMMIT}/pulls
-            """, returnStdout: true).trim()
-          }
-          def prNumber = sh(script: "echo '${resp}' | jq -r '.[0].number'", returnStdout: true).trim()
+          env.GH_OWNER = m[0][1]
+          env.GH_REPO  = m[0][2]
+        }
+        withCredentials([
+          usernamePassword(credentialsId: 'github-testina-ro-token', passwordVariable: 'GITHUB_TOKEN', usernameVariable: 'GITHUB_USER'),
+          usernamePassword(credentialsId: 'dockerhub-token', passwordVariable: 'DOCKERHUB_PWD', usernameVariable: 'DOCKERHUB_USR')
+        ]){
           sh '''
+            set -euo pipefail
+            prNumber=$(curl -fs -H "Authorization: Bearer ${GITHUB_TOKEN}" -H "Accept: application/vnd.github+json" https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/commits/${GIT_COMMIT}/pulls | jq -r '.[0].number // empty')
+            if [ -z "$prNumber" ]; then
+              echo "No PR found for $GIT_COMMIT, cannot promote" >&2
+              exit 1
+            fi
+            echo $DOCKERHUB_PWD | docker login --password-stdin -u $DOCKERHUB_USR
             docker pull ${IMAGE}:pr-${prNumber}
             docker tag ${IMAGE}:pr-${prNumber} ${IMAGE}:main-${TAG}
             docker tag ${IMAGE}:pr-${prNumber} ${IMAGE}:main-b${BUILD_NUMBER}
             docker push ${IMAGE}:main-${TAG}
-            docker push ${IMAGE}:main-b{BUILD_NUMBER}
+            docker push ${IMAGE}:main-b${BUILD_NUMBER}
           '''
         }
       }
@@ -185,6 +217,7 @@ pipeline {
 
   post {
     always { 
+      sh 'docker logout || true'
       sh 'docker rmi ${IMAGE}:${TAG}-dev ${IMAGE}:${TAG} ${IMAGE}:pr-${CHANGE_ID} ${IMAGE}:main-${TAG} ${IMAGE}:main-b${BUILD_NUMBER} || true'
     }
   }
