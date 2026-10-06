@@ -3,7 +3,7 @@ pipeline {
   agent any
     
   environment {
-    IMAGE_CI="fusillator/ci-tools:2026.09.15"
+    IMAGE_CI="fusillator/ci-tools:2026.10.06"
     IMAGE="fusillator/flask-demo"
     TAG="${env.GIT_COMMIT.take(7)}-b${env.BUILD_NUMBER}"
   }
@@ -131,15 +131,20 @@ pipeline {
           else
             APP_PATH=${WORKSPACE} 
           fi
+          docker run --rm --user 0:0 --cap-drop=ALL --cap-add CHOWN --security-opt=no-new-privileges:true --read-only -v ci_tools_cache:/home/semgrep/.semgrep ${IMAGE_CI} --entrypoint chown 1000:1000 /home/semgrep/.semgrep
           docker run --rm --user 1000:1000 --cap-drop=ALL --security-opt=no-new-privileges:true --read-only \
             --tmpfs /tmp:rw,noexec,nosuid,size=64m,mode=1777 \
             -v ${APP_PATH}/src:/src:ro \
-            -v "ci_tools_cache:/home/semgrep/.semgrep:rw" \
+            -v ci_tools_cache:/home/semgrep/.semgrep:rw \
+            -v ${APP_PATH}/semgrep.gitconfig:/home/semgrep/.gitconfig:rw \
             -w /src -e HOME=/home/semgrep \
             -e SEMGREP_APP_TOKEN -e SEMGREP_REPO_URL -e SEMGREP_REPO_NAME -e SEMGREP_BRANCH -e SEMGREP_COMMIT -e SEMGREP_PR_ID \
-            -e SEMGREP_VERSION_CACHE_PATH=/home/semgrep/.semgrep -e SEMGREP_LOG_FILE=/tmp/semgrep.log \
+            -e SEMGREP_VERSION_CACHE_PATH=/home/semgrep/.semgrep/version_cache -e SEMGREP_LOG_FILE=/tmp/semgrep.log \
+            -e GIT_CONFIG_GLOBAL=/tmp/gitconfig/.gitconfig \
             semgrep/semgrep:1.176.1-nonroot@sha256:4f79d592f85f91aa37597c0cfbad94ea5fa35c65571425fb061e406e6724d76e \
-            sh -c "semgrep install-semgrep-pro && semgrep ci --pro --code --no-suppress-errors --dry-run"
+            sh -c "mkdir -p /tmp/gitconfig && semgrep scan --pro --config p/default /src"
+            #sh -c "mkdir -p /tmp/gitconfig && semgrep ci --pro --code --no-suppress-errors --dry-run"
+            #sh -c "mkdir -p /tmp/gitconfig && semgrep install-semgrep-pro && semgrep ci --pro --code --no-suppress-errors --dry-run"
           '''
         }
       }
