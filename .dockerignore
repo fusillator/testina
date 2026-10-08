@@ -1,6 +1,11 @@
+*.egg-info/
 __pycache__/
 *.pyc
 .git
 .gitignore
+.venv/
+.ruff_cache/
+.pytest_cache/
 secret/
 Jenkinsfile
+Makefile
